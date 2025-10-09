@@ -7,6 +7,8 @@ yum install -y postgresql
 sleep 60
 
 # Create 'random' database
-psql -h "${rds_endpoint}" -U admin -d postgres <<EOF
+RDS_PSQL_ENDPOINT = "$(terraform output -raw rds_endpoint)"
+# psql -h "${rds_endpoint}" -U admin -d postgres <<EOF
+psql -h $RDS_PSQL_ENDPOINT -U "${var.admin_user}" -d "${var.new_db}" <<EOF
 CREATE DATABASE random;
 EOF

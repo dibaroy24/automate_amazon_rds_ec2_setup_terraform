@@ -1,5 +1,7 @@
 provider "aws" {
   region = var.location
+  # access_key = var.access_key
+  # secret_key = var.secret_key
 }
 
 # Create VPC
@@ -27,17 +29,26 @@ resource "aws_subnet" "vpc_public_subnet" {
   availability_zone       = "${var.location}a"
   map_public_ip_on_launch = true
   tags = {
-    Name = "${var.prefix}-public-subnet"
+    Name = "${var.prefix}-pub-subnet"
   }
 }
 
 # Create Private Subnet
-resource "aws_subnet" "vpc_private_subnet" {
+resource "aws_subnet" "vpc_private_subnet_a" {
   vpc_id                  = aws_vpc.my_vpc.id
   cidr_block              = "10.0.2.0/24"
   availability_zone       = "${var.location}a"
   tags = {
-    Name = "${var.prefix}-private-subnet"
+    Name = "${var.prefix}-pvt-subnet-1"
+  }
+}
+
+resource "aws_subnet" "vpc_private_subnet_b" {
+  vpc_id                  = aws_vpc.my_vpc.id
+  cidr_block              = "10.0.3.0/24"
+  availability_zone       = "${var.location}b"
+  tags = {
+    Name = "${var.prefix}-pvt-subnet-2"
   }
 }
 
@@ -72,6 +83,12 @@ resource "aws_nat_gateway" "my_nat_gateway" {
   }
 }
 
+# Associate the EIP with an EC2 Instance
+resource "aws_eip_association" "eip_assoc" {
+  instance_id   = aws_instance.ec2.id
+  allocation_id = aws_eip.nat_eip.id
+}
+
 # Associate Route Tables with Subnets
 resource "aws_route_table_association" "public_subnet_association" {
   subnet_id      = aws_subnet.vpc_public_subnet.id
@@ -79,18 +96,25 @@ resource "aws_route_table_association" "public_subnet_association" {
 }
 
 resource "aws_route_table_association" "private_subnet_association" {
-  subnet_id      = aws_subnet.vpc_private_subnet.id
+  subnet_id      = aws_subnet.vpc_private_subnet_a.id
   route_table_id = aws_route_table.vpc_private_route_table.id
+}
+
+# Create a DB Subnet Group
+resource "aws_db_subnet_group" "default" {
+  name       = "main-db-subnet-group"
+  subnet_ids = [aws_subnet.vpc_private_subnet_a.id, aws_subnet.vpc_private_subnet_b.id]
+  tags = {
+    Name = "${var.prefix}-db-subnet-group"
+  }
 }
 
 # Create Security Groups
 resource "aws_security_group" "rds_sg" {
-  name        = "${var.prefix}-allow-postgres"
+  name        = "rds-postgres-sg"
   description = "Allow PostgreSQL access from EC2"
   vpc_id = aws_vpc.my_vpc.id
-  tags = {
-    Name = "${var.prefix}-rds-sg"
-  }
+  
   ingress {
     from_port   = 5432
     to_port     = 5432
@@ -103,15 +127,17 @@ resource "aws_security_group" "rds_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "${var.prefix}-allow-postgres"
+  }
 }
 
 resource "aws_security_group" "ec2_sg" {
-  name        = "${var.prefix}-allow-ssh"
+  name        = "ec2-sg"
   description = "Allow SSH"
   vpc_id = aws_vpc.my_vpc.id
-  tags = {
-    Name = "${var.prefix}-ec2-sg"
-  }
+  
   ingress {
     from_port   = 22
     to_port     = 22
@@ -124,6 +150,10 @@ resource "aws_security_group" "ec2_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "${var.prefix}-allow-ssh"
+  }
 }
 
 # Create RDS
@@ -132,14 +162,20 @@ resource "aws_db_instance" "postgres" {
   engine            = "postgres"
   engine_version    = "14"
   instance_class    = "db.t3.micro"
-  username          = "admin"
+  username          = var.admin_user
   password          = var.admin_password
   allocated_storage = 20
-  db_name           = "postgres"
+  db_name           = var.new_db
+  multi_az          = false
   publicly_accessible = true
   skip_final_snapshot = true
 
-  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  vpc_security_group_ids  = [aws_security_group.rds_sg.id]
+  db_subnet_group_name    = aws_db_subnet_group.default.name
+
+  tags = {
+    Name = "${var.prefix}-rds"
+  }
 }
 
 # Create EC2
@@ -161,7 +197,10 @@ resource "aws_instance" "ec2" {
   ami           = data.aws_ami.amazon_linux_2.id
   instance_type = "t2.micro"
   key_name      = aws_key_pair.ec2_key.key_name
-  security_groups = [aws_security_group.ec2_sg.name]
+  subnet_id     = aws_subnet.vpc_public_subnet.id
+  # security_groups = [aws_security_group.ec2_sg.name]
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+  associate_public_ip_address = true
 
   user_data = file("scripts/init.sh")
 
