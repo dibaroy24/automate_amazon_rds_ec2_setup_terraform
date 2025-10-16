@@ -1,14 +1,15 @@
 #!/bin/bash
+set -e  # Exit immediately on error
+
+# Update and install PostgreSQL 14 client tools
 yum update -y
+
+# Enable PostgreSQL 14 extras repo
 amazon-linux-extras enable postgresql14
-yum install -y postgresql
 
-# Wait until RDS is ready
-sleep 60
+# Clean yum metadata and install PostgreSQL 14 client
+yum clean metadata
+yum install -y postgresql postgresql-server
 
-# Create 'random' database
-RDS_PSQL_ENDPOINT = "$(terraform output -raw rds_endpoint)"
-# psql -h "${rds_endpoint}" -U admin -d postgres <<EOF
-psql -h $RDS_PSQL_ENDPOINT -U "${var.admin_user}" -d "${var.new_db}" <<EOF
-CREATE DATABASE random;
-EOF
+# Confirm version to ensure libpq >= 10
+psql --version
